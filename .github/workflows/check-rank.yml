@@ -1,0 +1,29 @@
+name: Check Rakuten Rank
+
+on:
+  schedule:
+    # 毎日 9:00 UTC (日本時間 18:00) に実行
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-rank:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install playwright requests
+          playwright install chromium
+      
+      - name: Run rank checker
+        env:
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          USER_ID: ${{ secrets.USER_ID }}
+        run: python check_rank.py
