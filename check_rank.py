@@ -5,7 +5,6 @@ from datetime import datetime
 from playwright.async_api import async_playwright
 import asyncio
 import sys
-import urllib.parse
 
 async def get_rank(item_manage_id, keyword):
     """楽天で商品の検索順位を取得"""
@@ -79,27 +78,22 @@ async def main():
     
     # ダッシュボードから設定を取得
     try:
-        # tRPC の正しい形式でリクエストを送信
-        # GET /api/trpc/rankData.getConfigs?input={"userId":1}
-        input_data = json.dumps({"userId": user_id})
-        config_url = f"{dashboard_url}/api/trpc/rankData.getConfigs?input={urllib.parse.quote(input_data)}"
+        # 新しい Express エンドポイントを使用
+        config_url = f"{dashboard_url}/api/external/configs?userId={user_id}"
+        
         print(f"[DEBUG] Fetching configs from: {config_url}")
         
         response = requests.get(config_url, timeout=10)
         print(f"[DEBUG] Response status: {response.status_code}")
-        print(f"[DEBUG] Response headers: {dict(response.headers)}")
-        print(f"[DEBUG] Response body: {response.text[:500]}")
+        print(f"[DEBUG] Response body: {response.text[:1000]}")
         
         response.raise_for_status()
-        result = response.json()
+        configs = response.json()
         
-        print(f"[DEBUG] Config response: {json.dumps(result, indent=2)}")
-        
-        # tRPC のレスポンス形式に対応
-        configs = result.get("result", {}).get("data", [])
         print(f"[INFO] Found {len(configs)} configurations")
     except requests.exceptions.HTTPError as e:
-        print(f"[ERROR] HTTP Error: {e.response.status_code} - {e.response.text[:500]}", file=sys.stderr)
+        print(f"[ERROR] HTTP Error: {e.response.status_code}", file=sys.stderr)
+        print(f"[ERROR] Response: {e.response.text[:1000]}", file=sys.stderr)
         return
     except Exception as e:
         print(f"[ERROR] Failed to fetch configs: {str(e)}", file=sys.stderr)
@@ -133,7 +127,7 @@ async def main():
                 "userId": user_id
             }
             
-            send_url = f"{dashboard_url}/api/trpc/rankData.receive"
+            send_url = f"{dashboard_url}/api/external/rank-data"
             print(f"[DEBUG] Sending result to: {send_url}")
             print(f"[DEBUG] Payload: {json.dumps(payload, indent=2)}")
             
@@ -145,7 +139,8 @@ async def main():
             
             print(f"[INFO] Successfully sent result: {result['status']}")
         except requests.exceptions.HTTPError as e:
-            print(f"[ERROR] HTTP Error sending result: {e.response.status_code} - {e.response.text[:500]}", file=sys.stderr)
+            print(f"[ERROR] HTTP Error sending result: {e.response.status_code}", file=sys.stderr)
+            print(f"[ERROR] Response: {e.response.text[:500]}", file=sys.stderr)
         except Exception as e:
             print(f"[ERROR] Failed to send result: {str(e)}", file=sys.stderr)
             import traceback
