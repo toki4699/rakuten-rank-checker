@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import json
 import requests
@@ -7,51 +8,66 @@ import asyncio
 import sys
 
 async def get_rank(item_manage_id, keyword):
-    """楽天で商品の検索順位を取得"""
+    """楽天で商品の検索順位を取得（1ページ目のみ）"""
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page()
+        browser = await p.chromium.launch(
+            args=['--disable-blink-features=AutomationControlled']
+        )
+        page = await browser.new_page(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        )
         
         try:
             # 楽天検索ページにアクセス
             search_url = f"https://search.rakuten.co.jp/search/mall/{keyword}/"
             print(f"[DEBUG] Accessing URL: {search_url}")
-            await page.goto(search_url, wait_until="networkidle", timeout=30000)
             
-            # 商品要素を取得（PR商品を除外）
+            # タイムアウトを60秒に延長し、waitUntil を "domcontentloaded" に変更
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            
+            # ページが読み込まれるまで待機
+            await page.wait_for_timeout(2000)
+            
+            # 1ページ目の商品要素を取得（最初の100件程度）
             products = await page.query_selector_all(
-                'a[href*="item.rakuten.co.jp"][href*="' + item_manage_id + '"]'
+                'a[href*="item.rakuten.co.jp"]'
             )
             
-            if products:
-                print(f"[DEBUG] Found {len(products)} matching products")
-                # 最初にマッチした商品の順位を計算
-                all_items = await page.query_selector_all(
-                    'a[href*="item.rakuten.co.jp"]'
-                )
-                print(f"[DEBUG] Total items on page: {len(all_items)}")
-                
-                for idx, item in enumerate(all_items, 1):
-                    href = await item.get_attribute("href")
-                    if item_manage_id in href:
-                        print(f"[DEBUG] Found item at position {idx}")
-                        await browser.close()
-                        return {
-                            "rank": idx,
-                            "page": 1,
-                            "status": "found"
-                        }
+            print(f"[DEBUG] Total items on page 1: {len(products)}")
             
-            print(f"[DEBUG] Item not found in search results")
+            # 商品管理番号を含む商品を検索
+            for idx, item in enumerate(products, 1):
+                href = await item.get_attribute("href")
+                if href and str(item_manage_id) in href:
+                    print(f"[DEBUG] Found item at position {idx}")
+                    await browser.close()
+                    return {
+                        "rank": idx,
+                        "page": 1,
+                        "status": "found"
+                    }
+            
+            print(f"[DEBUG] Item not found in search results (page 1)")
             await browser.close()
             return {
                 "rank": None,
                 "page": None,
                 "status": "not_found"
             }
+        except asyncio.TimeoutError:
+            print(f"[ERROR] Timeout while accessing {search_url}", file=sys.stderr)
+            await browser.close()
+            return {
+                "rank": None,
+                "page": None,
+                "status": "timeout"
+            }
         except Exception as e:
             print(f"[ERROR] Exception occurred: {str(e)}", file=sys.stderr)
-            await browser.close()
+            try:
+                await browser.close()
+            except:
+                pass
             return {
                 "rank": None,
                 "page": None,
@@ -62,7 +78,7 @@ async def main():
     dashboard_url = os.getenv("DASHBOARD_URL")
     user_id = os.getenv("USER_ID")
     
-    print(f"[INFO] Starting rank checker")
+    print(f"[INFO] Starting rank checker (GAS Web App version)")
     print(f"[INFO] DASHBOARD_URL: {dashboard_url}")
     print(f"[INFO] USER_ID: {user_id}")
     
@@ -76,10 +92,10 @@ async def main():
         print("[ERROR] USER_ID must be a number", file=sys.stderr)
         return
     
-    # ダッシュボードから設定を取得
+    # GAS Web アプリから設定を取得
     try:
-        # 新しい Express エンドポイントを使用
-        config_url = f"{dashboard_url}/api/external/configs?userId={user_id}"
+        # GAS Web アプリの API エンドポイント
+        config_url = f"{dashboard_url}?action=api&method=getConfigs&userId={user_id}"
         
         print(f"[DEBUG] Fetching configs from: {config_url}")
         
@@ -115,7 +131,7 @@ async def main():
         result = await get_rank(config["itemManageId"], config["keyword"])
         print(f"[DEBUG] Rank check result: {result}")
         
-        # 結果をダッシュボードに送信
+        # 結果を GAS Web アプリに送信
         try:
             payload = {
                 "itemManageId": config["itemManageId"],
@@ -127,7 +143,7 @@ async def main():
                 "userId": user_id
             }
             
-            send_url = f"{dashboard_url}/api/external/rank-data"
+            send_url = f"{dashboard_url}?action=api&method=receiveRankData"
             print(f"[DEBUG] Sending result to: {send_url}")
             print(f"[DEBUG] Payload: {json.dumps(payload, indent=2)}")
             
