@@ -6,27 +6,44 @@ from datetime import datetime
 from playwright.async_api import async_playwright
 import asyncio
 import sys
+import time
 
 async def get_rank(item_manage_id, keyword):
     """楽天で商品の検索順位を取得（1ページ目のみ）"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            args=['--disable-blink-features=AutomationControlled']
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-first-run',
+                '--no-default-browser-check'
+            ]
         )
-        page = await browser.new_page(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        
+        # より自然な User-Agent を設定
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        
+        context = await browser.new_context(
+            user_agent=user_agent,
+            viewport={'width': 1920, 'height': 1080}
         )
+        
+        page = await context.new_page()
         
         try:
             # 楽天検索ページにアクセス
             search_url = f"https://search.rakuten.co.jp/search/mall/{keyword}/"
             print(f"[DEBUG] Accessing URL: {search_url}")
             
-            # タイムアウトを60秒に延長し、waitUntil を "domcontentloaded" に変更
-            await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            # ページを読み込み
+            await page.goto(search_url, wait_until="networkidle", timeout=60000)
             
-            # ページが読み込まれるまで待機
-            await page.wait_for_timeout(2000)
+            # JavaScript が実行されるまで待機
+            await page.wait_for_timeout(3000)
+            
+            # ページのスクロールをシミュレート（より自然に見せる）
+            await page.evaluate("window.scrollBy(0, window.innerHeight)")
+            await page.wait_for_timeout(1000)
             
             # 1ページ目の商品要素を取得（最初の100件程度）
             products = await page.query_selector_all(
@@ -34,6 +51,14 @@ async def get_rank(item_manage_id, keyword):
             )
             
             print(f"[DEBUG] Total items on page 1: {len(products)}")
+            
+            # 商品が見つからない場合、別のセレクタを試す
+            if len(products) == 0:
+                print(f"[DEBUG] No products found with first selector, trying alternative...")
+                products = await page.query_selector_all(
+                    'a[data-item-id]'
+                )
+                print(f"[DEBUG] Total items with alternative selector: {len(products)}")
             
             # 商品管理番号を含む商品を検索
             for idx, item in enumerate(products, 1):
@@ -122,7 +147,7 @@ async def main():
         return
     
     # 各設定について順位を取得
-    for config in configs:
+    for i, config in enumerate(configs):
         if config.get("isActive") != 1:
             print(f"[INFO] Skipping inactive config: {config['itemManageId']}")
             continue
@@ -161,6 +186,11 @@ async def main():
             print(f"[ERROR] Failed to send result: {str(e)}", file=sys.stderr)
             import traceback
             traceback.print_exc()
+        
+        # リクエスト間に遅延を追加（楽天への負荷を減らす）
+        if i < len(configs) - 1:
+            print(f"[DEBUG] Waiting 5 seconds before next request...")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
